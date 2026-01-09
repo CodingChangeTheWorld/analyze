@@ -1,16 +1,19 @@
-from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple
-import pandas as pd
-from datasource import BinanceDataSource
-from indicators import Indicators
 
-class BaseStrategy(ABC):
-    @abstractmethod
-    def analyze(self, symbol: str, ds: BinanceDataSource) -> Optional[Dict[str, object]]:
-        pass
+import pandas as pd
+
+from config import Config
+from core.datasource import BinanceDataSource
+from core.indicators import Indicators
+from core.strategy.base import BaseStrategy
+from core.strategy.config import StrategyConfig
+
 
 class PullbackShortStrategy(BaseStrategy):
-    def analyze(self, symbol: str, ds: BinanceDataSource) -> Optional[Dict[str, object]]:
+    def __init__(self):
+        self.cfg = StrategyConfig.PULLBACK_SHORT
+
+    def analyze(self, symbol: str, ds: BinanceDataSource, **kwargs: object) -> Optional[Dict[str, object]]:
         h4 = ds.get_klines_df(symbol, "4h", 200)
         h1 = ds.get_klines_df(symbol, "1h", 200)
         m15 = ds.get_klines_df(symbol, "15m", 200)
@@ -20,8 +23,9 @@ class PullbackShortStrategy(BaseStrategy):
         if len(h4) < 60 or len(h1) < 60 or len(m15) < 60:
             return None
 
-        if not self._check_trend(h4["close"]) or not self._check_trend(h1["close"]):
-            return None
+        if bool(getattr(Config, "TREND_FILTER_ENABLED", False)):
+            if not self._check_trend(h4["close"]) or not self._check_trend(h1["close"]):
+                return None
 
         breakdown = self._find_breakdown(h1)
         if not breakdown:
@@ -60,56 +64,42 @@ class PullbackShortStrategy(BaseStrategy):
         n = len(df)
         if n < 20:
             return None
-        last_atr = atr_vals.iloc[-1]
-        tol = max((last_atr * 0.25) if pd.notna(last_atr) else 0, df["close"].iloc[-1] * 0.001)
-        
+        price_tolerance_pct = 0.02
+        wick_ratio_min = 0.4
+
         for i in range(n - 5, n):
-            h = df["high"].iloc[i]
-            l = df["low"].iloc[i]
-            # Price touches level area
-            if abs(h - level) <= tol or (l <= level <= h):
-                if self._is_candle_rejection(df.iloc[i], level) or \
-                   (i + 1 < n and self._is_candle_rejection(df.iloc[i + 1], level)):
-                    return i
+            if self.is_level_rejection(df.iloc[i], level, side="short", price_tolerance_pct=price_tolerance_pct, wick_ratio_min=wick_ratio_min) or (
+                i + 1 < n and self.is_level_rejection(df.iloc[i + 1], level, side="short", price_tolerance_pct=price_tolerance_pct, wick_ratio_min=wick_ratio_min)
+            ):
+                return i
         return None
 
-    def _is_candle_rejection(self, row: pd.Series, level: float) -> bool:
-        o = float(row["open"])
-        h = float(row["high"])
-        l = float(row["low"])
-        cl = float(row["close"])
-        red = cl < o
-        rng = h - l
-        if rng <= 0:
-            return False
-        upper = h - max(o, cl)
-        # Bearish candle, long upper wick, close below level
-        return red and upper >= rng * 0.4 and cl < level
-
-    def _calculate_risk(self, symbol: str, level: float, atr_vals: pd.Series, idx: int, time_ms: int, rsi_ok: bool, h4: pd.DataFrame, h1: pd.DataFrame) -> Dict[str, object]:
+    def _calculate_risk(
+        self, symbol: str, level: float, atr_vals: pd.Series, idx: int, time_ms: int, rsi_ok: bool, h4: pd.DataFrame, h1: pd.DataFrame
+    ) -> Dict[str, object]:
         last_atr = atr_vals.iloc[-1]
         atr_small = (last_atr * 0.1) if pd.notna(last_atr) else 0
         atr_large = (last_atr * 0.5) if pd.notna(last_atr) else 0
-        
+
         entry = level - max(atr_small, level * 0.0005)
         stop = level + max(atr_large, level * 0.0015)
         risk = stop - entry
         target = entry - risk * 2
         rr = (entry - target) / risk if risk > 0 else 0
-        
-        score = 1 # Base score
+
+        score = 1
         score += 1 if self._check_trend(h4["close"]) else 0
         score += 1 if self._check_trend(h1["close"]) else 0
         score += 1 if rsi_ok else 0
         score += 1 if rr >= 2 else 0
-        
-        return {
-            "symbol": symbol,
-            "level": level,
-            "entry": entry,
-            "stop": stop,
-            "target": target,
-            "rr": round(rr, 2),
-            "score": score,
-            "time": int(time_ms)
-        }
+
+        return self.build_signal(
+            symbol=symbol,
+            time_ms=int(time_ms),
+            rr=round(rr, 2),
+            score=score,
+            level=level,
+            entry=entry,
+            stop=stop,
+            target=target,
+        )

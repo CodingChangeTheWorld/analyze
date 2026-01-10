@@ -16,15 +16,14 @@ class Config:
     OI_CACHE_SEC = 30
     
     # Scanner Settings
-    TOP_N = 2
+    TOP_N = 300
     MIN_QUOTE_VOLUME = 5_000_000  # 5 Million USDT
     SCAN_MAX_WORKERS = 12
     
-    # Backfill Settings
-    BACKFILL_MAX_ROUNDS = 10
-    BACKFILL_BATCH_SIZE = 1000
+    BACKFILL_MAX_ROUNDS = 10  
+    BACKFILL_BATCH_SIZE = 1500  
     BACKFILL_SLEEP_SEC = 0.1
-    BACKFILL_CONCURRENCY = 12
+    BACKFILL_CONCURRENCY = 10
     WS_WARMUP_SEC = 5
     
     # WebSocket Settings

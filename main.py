@@ -1,5 +1,7 @@
 import time
-from typing import Dict
+import json
+from datetime import datetime
+from typing import Dict, List
 from core.datasource import BinanceDataSource
 from core.strategy import PullbackShortStrategy, SqueezeBreakoutLongStrategy
 from core.scanner import MarketScanner
@@ -30,12 +32,44 @@ def fmt_signal(sig: Dict[str, object]) -> str:
         )
     return base
 
+def save_signals_to_file(signals: List[Dict[str, object]], file_path: str = None):
+    """将信号结果保存到文件
+    
+    Args:
+        signals: 信号列表
+        file_path: 输出文件路径，默认保存到signals目录下
+    """
+    import os
+    
+    if not signals:
+        return
+    
+    # 默认文件路径
+    if not file_path:
+        # 创建signals目录（如果不存在）
+        os.makedirs("signals", exist_ok=True)
+        # 使用当前日期和时间命名文件
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_path = f"signals/signals_{timestamp}.json"
+    
+    # 添加时间戳到每个信号
+    for signal in signals:
+        if "time" not in signal:
+            signal["time"] = int(time.time() * 1000)
+        signal["time_readable"] = datetime.fromtimestamp(signal["time"] / 1000).strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 保存为JSON文件
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(signals, f, indent=2, ensure_ascii=False)
+    
+    print(f"\n信号结果已保存到: {file_path}")
+
 def main():
     print("Initializing BinanceDataSource...")
     ds = BinanceDataSource(top_n=Config.TOP_N, min_quote_volume=Config.MIN_QUOTE_VOLUME)
     
     print("Initializing PullbackShortStrategy...")
-    strategies = [PullbackShortStrategy(), SqueezeBreakoutLongStrategy()]
+    strategies = [SqueezeBreakoutLongStrategy()]
     
     print("Initializing MarketScanner...")
     scanner = MarketScanner(ds, strategies)
@@ -54,6 +88,8 @@ def main():
                 print(f"Found {len(res)} candidates (took {duration:.2f}s):")
                 for s in res[:20]:
                     print(fmt_signal(s))
+                # 保存信号到文件
+                save_signals_to_file(res)
             else:
                 print(f"No signals found (took {duration:.2f}s).")
             

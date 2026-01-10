@@ -285,32 +285,57 @@ class KlineStore:
             start_time = last_close + 1
 
         rounds = 0
+        # 累积数据批次以减少concat和去重操作的开销
+        accumulated_data = []
+        batch_count = 0
+        BATCH_ACCUMULATE_LIMIT = 3  # 每累积3批数据处理一次
+
         while rounds < max_rounds:
             rounds += 1
             now_ms = int(time.time() * 1000)
             if start_time >= now_ms - 60_000:
                 break
 
-            new_df = rest.get_klines_raw(symbol, "1m", Config.BACKFILL_BATCH_SIZE, start_time=start_time, end_time=None)
+            batch_size = Config.BACKFILL_BATCH_SIZE
+            new_df = rest.get_klines_raw(symbol, "1m", batch_size, start_time=start_time, end_time=None)
             if new_df.empty:
                 break
 
-            for col in ["open", "high", "low", "close", "volume"]:
-                new_df[col] = new_df[col].astype(float)
-            new_df["open_time"] = new_df["open_time"].astype("int64")
-            new_df["close_time"] = new_df["close_time"].astype("int64")
+            # 只转换需要的列，减少转换开销
+            new_df = new_df.astype({
+                "open": float,
+                "high": float,
+                "low": float,
+                "close": float,
+                "volume": float,
+                "open_time": "int64",
+                "close_time": "int64"
+            })
 
-            if df.empty:
-                for col in ["open", "high", "low", "close", "volume"]:
-                    df[col] = df[col].astype(float)
-                df["open_time"] = df["open_time"].astype("int64")
-                df["close_time"] = df["close_time"].astype("int64")
+            accumulated_data.append(new_df)
+            batch_count += 1
 
-            df = pd.concat([df, new_df], ignore_index=True)
-            df = df.drop_duplicates(subset=["open_time"]).sort_values("open_time").reset_index(drop=True)
+            # 更新下一次请求的开始时间
+            start_time = int(new_df["close_time"].iloc[-1]) + 1
 
-            last_close = int(df["close_time"].iloc[-1])
-            start_time = last_close + 1
+            # 每累积一定数量的批次或者达到最大轮数时，合并数据
+            if batch_count >= BATCH_ACCUMULATE_LIMIT or rounds >= max_rounds:
+                if accumulated_data:
+                    # 一次性合并所有累积的数据
+                    merged_df = pd.concat(accumulated_data, ignore_index=True)
+                    
+                    if df.empty:
+                        # 初始化主数据框的列类型
+                        df = merged_df.copy()
+                    else:
+                        # 合并主数据框和累积数据
+                        df = pd.concat([df, merged_df], ignore_index=True)
+                        # 只做一次去重和排序操作
+                        df = df.drop_duplicates(subset=["open_time"]).sort_values("open_time").reset_index(drop=True)
+                    
+                    # 重置累积数据
+                    accumulated_data = []
+                    batch_count = 0
 
             time.sleep(Config.BACKFILL_SLEEP_SEC)
 

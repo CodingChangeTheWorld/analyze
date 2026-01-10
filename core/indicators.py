@@ -8,6 +8,10 @@ class Indicators:
         return series.ewm(span=period, adjust=False).mean()
 
     @staticmethod
+    def sma(series: pd.Series, period: int) -> pd.Series:
+        return series.rolling(window=period, min_periods=period).mean()
+
+    @staticmethod
     def rsi(series: pd.Series, period: int) -> pd.Series:
         delta = series.diff()
         gain = delta.clip(lower=0)

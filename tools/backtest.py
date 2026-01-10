@@ -26,7 +26,23 @@ class MockDataSource(BinanceDataSource):
 def fmt_signal(sig: Dict[str, object]) -> str:
     strat = sig.get("strategy", "")
     prefix = f"[{strat}] " if strat else ""
-    return f'{prefix}{sig["symbol"]} level={round(sig["level"],6)} entry={round(sig["entry"],6)} stop={round(sig["stop"],6)} target={round(sig["target"],6)} rr={sig["rr"]} score={sig["score"]}'
+    symbol = sig["symbol"]
+    level = round(sig["level"], 6)
+    entry = round(sig["entry"], 6)
+    stop = round(sig["stop"], 6)
+    rr = sig["rr"]
+    score = sig["score"]
+    
+    # Check if it's a squeeze strategy signal with tp1/tp2 or pullback with target
+    if "tp1" in sig and "tp2" in sig:
+        tp1 = round(sig["tp1"], 6)
+        tp2 = round(sig["tp2"], 6)
+        return f'{prefix}{symbol} level={level} entry={entry} stop={stop} tp1={tp1} tp2={tp2} rr={rr} score={score}'
+    elif "target" in sig:
+        target = round(sig["target"], 6)
+        return f'{prefix}{symbol} level={level} entry={entry} stop={stop} target={target} rr={rr} score={score}'
+    else:
+        return f'{prefix}{symbol} level={level} entry={entry} stop={stop} rr={rr} score={score}'
 
 
 def _date_range_utc_ms(date_str: str) -> tuple[int, int]:
@@ -168,7 +184,10 @@ def backtest_day(symbol: str, date_str: str, strategy_name: str = "pullback") ->
         signals.append(sig)
 
     def _fmt_ts(ms: int) -> str:
-        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+        # 将时间戳转换为UTC时间，然后添加8小时转换为北京时间
+        utc_dt = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+        beijing_dt = utc_dt + timedelta(hours=8)
+        return beijing_dt.strftime("%Y-%m-%d %H:%M")
 
     print(f"发现信号数: {len(signals)}", flush=True)
     for s in signals[:50]:
@@ -187,8 +206,16 @@ def backtest_day(symbol: str, date_str: str, strategy_name: str = "pullback") ->
     for s in signals:
         entry = float(s["entry"])
         stop = float(s["stop"])
-        target = float(s["target"])
         t0 = int(s["time"])
+        
+        # Check if it's a squeeze strategy signal with tp1/tp2 or pullback with target
+        if "tp1" in s and "tp2" in s:
+            target = float(s["tp1"])  # Use tp1 as target for outcome check
+        elif "target" in s:
+            target = float(s["target"])
+        else:
+            print(f"Warning: No target found for signal {s}")
+            continue
         
         # Determine direction
         is_long = target > entry
